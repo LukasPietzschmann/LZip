@@ -93,3 +93,49 @@ void build_huffman_tree(
 	free(next_code);
 	free(tree);
 }
+
+typedef struct {
+	FILE* source;
+	unsigned char buf;
+	// current bit position within buffer
+	// 8 is MSB
+	unsigned char mask;
+} bit_stream;
+
+// Read a single bit from the stream
+unsigned next_bit(bit_stream* stream) {
+	unsigned bit = 0;
+
+	bit = (stream->buf & stream->mask) ? 1 : 0;
+	// gzip's bit-orderung is absolutely fucked!
+	// bytes should be read sequentially,  interpreting the bits within them is done
+	// right-to-left, but then reversed for interpretation???
+	stream->mask <<= 1;
+
+	if(!stream->mask) {
+		stream->mask = 1;
+		if(fread(&stream->buf, 1, 1, stream->source) < 1)
+			perror("Error reading compressed input");
+	}
+
+	return bit;
+}
+
+// Read multiple bits from the stream
+unsigned read_bits(bit_stream* stream, unsigned numof_bits) {
+	unsigned bits_value = 0;
+
+	while(numof_bits--)
+		bits_value = (bits_value << 1) | next_bit(stream);
+
+	return bits_value;
+}
+
+unsigned read_bits_and_invert(bit_stream* stream, unsigned numof_bits) {
+	unsigned bits_value = 0;
+
+	for(unsigned i = 0; i < numof_bits; ++i)
+		bits_value |= (next_bit(stream) << i);
+
+	return bits_value;
+}
