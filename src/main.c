@@ -154,6 +154,103 @@ unsigned read_bits_and_invert(bit_stream* stream, unsigned numof_bits) {
 	return bits_value;
 }
 
+// Build a Huffman tree from input (see 3.2.7)
+void read_dynamic_huffman_tree(
+	bit_stream* stream, huffman_node* literals_root, huffman_node* distances_root) {
+	unsigned i, j;
+
+	unsigned code_length_offsets[] = {
+		16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
+
+	unsigned hlit = read_bits_and_invert(stream, 5);
+	unsigned hdist = read_bits_and_invert(stream, 5);
+	unsigned hclen = read_bits_and_invert(stream, 4);
+
+	unsigned code_lengths[19];
+	huffman_range code_length_ranges[19];
+	memset(code_lengths, '\0', sizeof(code_lengths));
+	for(i = 0; i < (hclen + 4); ++i)
+		code_lengths[code_length_offsets[i]] = read_bits_and_invert(stream, 3);
+
+	j = 0;
+	for(i = 0; i < 19; ++i) {
+		if((i > 0) && (code_lengths[i] != code_lengths[i - 1]))
+			++j;
+		code_length_ranges[j].end = i;
+		code_length_ranges[j].bit_length = code_lengths[i];
+	}
+
+	huffman_node code_lengths_root;
+	memset(&code_lengths_root, '\0', sizeof(huffman_node));
+	build_huffman_tree(&code_lengths_root, j + 1, code_length_ranges);
+
+	// Read the literal/length alphabet
+	// This is encoded using the Huffman tree from the previous step
+	i = 0;
+	int* alphabet = malloc((hlit + hdist + 258) * sizeof(int));
+	huffman_range* alphabet_ranges =
+		malloc((hlit + hdist + 258) * sizeof(huffman_range));
+	huffman_node* code_lengths_node = &code_lengths_root;
+	while(i < (hlit + hdist + 258)) {
+		if(next_bit(stream))
+			code_lengths_node = code_lengths_node->rhs;
+		else
+			code_lengths_node = code_lengths_node->lhs;
+
+		if(code_lengths_node->code != -1) {
+			if(code_lengths_node->code > 15) {
+				unsigned repeat_length;
+
+				switch(code_lengths_node->code) {
+					case 16: repeat_length = read_bits_and_invert(stream, 2) + 3; break;
+					case 17: repeat_length = read_bits_and_invert(stream, 3) + 3; break;
+					case 18:
+						repeat_length = read_bits_and_invert(stream, 7) + 11;
+						break;
+				}
+
+				while(repeat_length--) {
+					if(code_lengths_node->code == 16)
+						alphabet[i] = alphabet[i - 1];
+					else
+						alphabet[i] = 0;
+					++i;
+				}
+			} else {
+				alphabet[i] = code_lengths_node->code;
+				++i;
+			}
+
+			code_lengths_node = &code_lengths_root;
+		}
+	}
+
+	// Turn alphabet lengths into a valid range declaration and build the final Huffman
+	// code from it
+	j = 0;
+	for(i = 0; i <= (hlit + 257); ++i) {
+		if((i > 0) && (alphabet[i] != alphabet[i - 1]))
+			++j;
+		alphabet_ranges[j].end = i;
+		alphabet_ranges[j].bit_length = alphabet[i];
+	}
+
+	build_huffman_tree(literals_root, j, alphabet_ranges);
+
+	--i;
+	j = 0;
+	for(; i <= (hdist + hlit + 258); ++i) {
+		if((i > (257 + hlit)) && (alphabet[i] != alphabet[i - 1]))
+			++j;
+		alphabet_ranges[j].end = i - (257 + hlit);
+		alphabet_ranges[j].bit_length = alphabet[i];
+	}
+
+	build_huffman_tree(distances_root, j, alphabet_ranges);
+
+	free(alphabet);
+	free(alphabet_ranges);
+}
 enum { MAX_BUF = 255 };
 // Read a null-terminated string from a file
 // Null terminated strings in files suck
