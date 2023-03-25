@@ -1,4 +1,9 @@
-int main() { return 0; }
+#include <assert.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 typedef struct {
 	unsigned code;
 	unsigned bit_length;
