@@ -94,6 +94,20 @@ void build_huffman_tree(
 	free(tree);
 }
 
+/**
+ * Build a Huffman tree for the following values:
+ *   0 - 143: 00110000  - 10111111     (8)
+ * 144 - 255: 110010000 - 111111111    (9)
+ * 256 - 279: 0000000   - 0010111      (7)
+ * 280 - 287: 11000000  - 11000111     (8)
+ * See RFC 1951 rules in section 3.2.2
+ * This is used to (de)compress small inputs.
+ */
+void build_fixed_huffman_tree(huffman_node* root) {
+	huffman_range range[4] = {{143, 8}, {255, 9}, {279, 7}, {287, 8}};
+	build_huffman_tree(root, 4, range);
+}
+
 typedef struct {
 	FILE* source;
 	unsigned char buf;
