@@ -5,6 +5,26 @@
 #include <string.h>
 
 typedef struct {
+	unsigned char id[2];
+	unsigned char compression_method;
+	unsigned char flags;
+	unsigned char mtime[4];
+	unsigned char extra_flags;
+	unsigned char os;
+} gzip_header;
+
+typedef struct {
+	gzip_header header;
+	unsigned short xlen;
+	unsigned char* extra;
+	char* fname;
+	char* fcomment;
+	unsigned short crc16;
+	unsigned long crc32;
+	unsigned long isize;
+} gzip_file;
+
+typedef struct {
 	unsigned code;
 	unsigned bit_length;
 } tree_node;
@@ -417,3 +437,99 @@ bool read_string(FILE* in, char** target) {
 	return true;
 }
 
+enum { FHCRC = 2, FEXTRA = 4, FNAME = 8, FCOMMENT = 16 };
+// Strip off an RFC 1952-compliant gzip file header and decompress to stdout
+int main(int argc, char* argv[]) {
+	FILE* in;
+	gzip_file gzip;
+
+	gzip.extra = NULL;
+	gzip.fname = NULL;
+	gzip.fcomment = NULL;
+
+	if(argc != 2) {
+		fprintf(stderr, "Usage: %s <file>\n", argv[0]);
+		exit(1);
+	}
+
+	in = fopen(argv[1], "r");
+
+	if(!in) {
+		fprintf(stderr, "Unable to open file '%s' for reading.\n", argv[1]);
+		exit(1);
+	}
+
+	if(fread(&gzip.header, sizeof(gzip_header), 1, in) < 1) {
+		perror("Error reading header");
+		goto done;
+	}
+
+	if((gzip.header.id[0] != 31) || (gzip.header.id[1] != 139)) {
+		fprintf(stderr, "Input not in gzip format.\n");
+		goto done;
+	}
+
+	if(gzip.header.compression_method != 8) {
+		fprintf(stderr, "Unrecognized compression method.\n");
+		goto done;
+	}
+
+	if(gzip.header.flags & FEXTRA) {
+		if(fread(&gzip.xlen, 2, 1, in) < 1) {
+			perror("Error reading extras length");
+			goto done;
+		}
+
+		gzip.extra = malloc(gzip.xlen);
+		if(fread(gzip.extra, gzip.xlen, 1, in) < 1) {
+			perror("Error reading extras");
+			goto done;
+		}
+		// TODO interpret the extra data
+	}
+
+	if(gzip.header.flags & FNAME) {
+		if(!read_string(in, &gzip.fname))
+			goto done;
+	}
+
+	if(gzip.header.flags & FCOMMENT) {
+		if(!read_string(in, &gzip.fcomment))
+			goto done;
+	}
+
+	if(gzip.header.flags & FHCRC) {
+		if(fread(&gzip.crc16, 2, 1, in) < 1) {
+			perror("Error reading CRC16");
+			goto done;
+		}
+	}
+
+	// compressed blocks follow
+	if(!inflate(in))
+		goto done;
+
+	if(fread(&gzip.crc32, 2, 1, in) < 1) {
+		perror("Error reading CRC32");
+		goto done;
+	}
+
+	if(fread(&gzip.isize, 2, 1, in) < 1) {
+		perror("Error reading isize");
+		goto done;
+	}
+
+	// TODO check the CRC32
+
+done:
+	free(gzip.extra);
+	free(gzip.fname);
+	free(gzip.fcomment);
+
+	if(fclose(in)) {
+		perror("Unable to close input file.\n");
+		exit(1);
+	}
+
+	exit(0);
+}
