@@ -349,6 +349,50 @@ bool inflate_huffman_codes(
 	return true;
 }
 
+// Decompress a deflated input stream compliant
+bool inflate(FILE* compressed_input) {
+	// Bit 8 indicates if this is the last block
+	// Bits 7 and 6 indicate compression type
+	bit_stream stream;
+	stream.source = compressed_input;
+	fread(&stream.buf, 1, 1, compressed_input);
+	stream.mask = 1;
+
+	huffman_node literals_root;
+	huffman_node distances_root;
+	unsigned last_block;
+	do {
+		last_block = next_bit(&stream);
+		unsigned block_format = read_bits_and_invert(&stream, 2);
+
+		switch(block_format) {
+			case 0:
+				printf("Uncompressed block.\n");
+				fprintf(stderr, "uncompressed block type not supported.\n");
+				return false;
+				break;
+			// Note, backwards from the spec, since the bits are being read
+			// right-to-left
+			case 1:
+				memset(&literals_root, '\0', sizeof(huffman_node));
+				build_fixed_huffman_tree(&literals_root);
+				inflate_huffman_codes(&stream, &literals_root, NULL);
+				break;
+			case 2:
+				memset(&literals_root, '\0', sizeof(huffman_node));
+				memset(&distances_root, '\0', sizeof(huffman_node));
+				read_dynamic_huffman_tree(&stream, &literals_root, &distances_root);
+				inflate_huffman_codes(&stream, &literals_root, &distances_root);
+				break;
+			default:
+				fprintf(stderr, "Error, unsupported block type %x.\n", block_format);
+				return false;
+				break;
+		}
+	} while(!last_block);
+
+	return true;
+}
 
 enum { MAX_BUF = 255 };
 // Read a null-terminated string from a file
