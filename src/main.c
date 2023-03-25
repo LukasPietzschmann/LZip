@@ -153,3 +153,27 @@ unsigned read_bits_and_invert(bit_stream* stream, unsigned numof_bits) {
 
 	return bits_value;
 }
+
+enum { MAX_BUF = 255 };
+// Read a null-terminated string from a file
+// Null terminated strings in files suck
+bool read_string(FILE* in, char** target) {
+	char buffer[MAX_BUF];
+	char* buf_ptr;
+
+	buf_ptr = buffer;
+
+	// TODO deal with strings > MAX_BUF
+	do {
+		if(fread(buf_ptr, 1, 1, in) < 1) {
+			perror("Error reading string value");
+			return false;
+		}
+	} while(*(buf_ptr++));
+
+	*target = malloc(buf_ptr - buffer);
+	strncpy(*target, buffer, buf_ptr - buffer);
+
+	return true;
+}
+
