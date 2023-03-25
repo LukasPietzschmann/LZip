@@ -256,6 +256,100 @@ void read_dynamic_huffman_tree(
 	free(alphabet);
 	free(alphabet_ranges);
 }
+
+enum { MAX_DISTANCE = 32768 };
+bool inflate_huffman_codes(
+	bit_stream* stream, huffman_node* literals_root, huffman_node* distances_root) {
+	unsigned extra_length_addend[] = {11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59,
+		67, 83, 99, 115, 131, 163, 195, 227};
+	unsigned extra_dist_addend[] = {4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256,
+		384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576};
+
+	unsigned char buf[MAX_DISTANCE];
+	unsigned char* ptr = buf;
+	huffman_node* node = literals_root;
+
+	bool stop_code = false;
+	while(!stop_code) {
+		if(feof(stream->source)) {
+			fprintf(stderr, "Premature end of file.\n");
+			return false;
+		}
+
+		if(next_bit(stream))
+			node = node->rhs;
+		else
+			node = node->lhs;
+
+		// Found a leaf in the tree
+		// Decode a symbol
+		if(node->code != -1) {
+			// should never happen
+			assert(node->code < 286);
+
+			if(node->code < 256)
+				*(ptr++) = node->code;
+			if(node->code == 256) {
+				stop_code = true;
+				break;
+			}
+			if(node->code > 256) {
+				// This is a back-pointer to a position in the stream
+				// Interpret the length here as specified in 3.2.5
+				unsigned length;
+				if(node->code < 265)
+					length = node->code - 254;
+				else {
+					if(node->code < 285) {
+						unsigned extra_bits =
+							read_bits_and_invert(stream, (node->code - 261) / 4);
+
+						length = extra_bits + extra_length_addend[node->code - 265];
+					} else
+						length = 258;
+				}
+
+				// The length is followed by the distance
+				// The distance is coded in 5 bits and may be followed by extra bits
+				// (see 3.2.5)
+				unsigned dist;
+				if(distances_root == NULL)
+					// Hardcoded distances
+					dist = read_bits(stream, 5);
+				else {
+					// Dynamic distances
+					node = distances_root;
+					while(node->code == -1) {
+						if(next_bit(stream))
+							node = node->rhs;
+						else
+							node = node->lhs;
+					}
+					dist = node->code;
+				}
+
+				if(dist > 3) {
+					unsigned extra_dist = read_bits_and_invert(stream, (dist - 2) / 2);
+					// Embed the logic in the table at the end of 3.2.5
+					dist = extra_dist + extra_dist_addend[dist - 4];
+				}
+
+				unsigned char* backptr = ptr - dist - 1;
+				while(length--)
+					*(ptr++) = *(backptr++);
+			}
+			node = literals_root;
+		}
+	}
+
+	*ptr = '\0';
+
+	printf("%s\n", buf);
+
+	return true;
+}
+
+
 enum { MAX_BUF = 255 };
 // Read a null-terminated string from a file
 // Null terminated strings in files suck
