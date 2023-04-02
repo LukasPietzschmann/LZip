@@ -1,8 +1,10 @@
 #include <assert.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 typedef struct {
 	unsigned char id[2];
@@ -278,14 +280,15 @@ void read_dynamic_huffman_tree(
 }
 
 enum { MAX_DISTANCE = 32768 };
-bool inflate_huffman_codes(
-	bit_stream* stream, huffman_node* literals_root, huffman_node* distances_root) {
+bool inflate_huffman_codes(bit_stream* stream, huffman_node* literals_root,
+	huffman_node* distances_root, int fd) {
 	unsigned extra_length_addend[] = {11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59,
 		67, 83, 99, 115, 131, 163, 195, 227};
 	unsigned extra_dist_addend[] = {4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256,
 		384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576};
 
 	unsigned char buf[MAX_DISTANCE];
+	unsigned byte_count = 0;
 	unsigned char* ptr = buf;
 	huffman_node* node = literals_root;
 
@@ -307,8 +310,10 @@ bool inflate_huffman_codes(
 			// should never happen
 			assert(node->code < 286);
 
-			if(node->code < 256)
+			if(node->code < 256) {
 				*(ptr++) = node->code;
+				++byte_count;
+			}
 			if(node->code == 256) {
 				stop_code = true;
 				break;
@@ -355,22 +360,23 @@ bool inflate_huffman_codes(
 				}
 
 				unsigned char* backptr = ptr - dist - 1;
-				while(length--)
+				while(length--) {
 					*(ptr++) = *(backptr++);
+					++byte_count;
+				}
 			}
 			node = literals_root;
 		}
 	}
 
-	*ptr = '\0';
-
-	printf("%s\n", buf);
-
+	unsigned bytes_written = 0;
+	while((bytes_written += write(fd, buf, byte_count)) < byte_count)
+		;
 	return true;
 }
 
 // Decompress a deflated input stream compliant
-bool inflate(FILE* compressed_input) {
+bool inflate(FILE* compressed_input, int fd) {
 	// Bit 8 indicates if this is the last block
 	// Bits 7 and 6 indicate compression type
 	bit_stream stream;
@@ -396,13 +402,13 @@ bool inflate(FILE* compressed_input) {
 			case 1:
 				memset(&literals_root, '\0', sizeof(huffman_node));
 				build_fixed_huffman_tree(&literals_root);
-				inflate_huffman_codes(&stream, &literals_root, NULL);
+				inflate_huffman_codes(&stream, &literals_root, NULL, fd);
 				break;
 			case 2:
 				memset(&literals_root, '\0', sizeof(huffman_node));
 				memset(&distances_root, '\0', sizeof(huffman_node));
 				read_dynamic_huffman_tree(&stream, &literals_root, &distances_root);
-				inflate_huffman_codes(&stream, &literals_root, &distances_root);
+				inflate_huffman_codes(&stream, &literals_root, &distances_root, fd);
 				break;
 			default:
 				fprintf(stderr, "Error, unsupported block type %x.\n", block_format);
@@ -505,9 +511,22 @@ int main(int argc, char* argv[]) {
 		}
 	}
 
-	// compressed blocks follow
-	if(!inflate(in))
+	int fd = open(gzip.fname, O_WRONLY | O_CREAT | O_EXCL | O_APPEND, 0744);
+	if(fd < 0) {
+		perror("Target already exists");
 		goto done;
+	}
+
+	// compressed blocks follow
+	if(!inflate(in, fd))
+		goto done;
+
+	// TODO: set mtime
+
+	if(close(fd) < 0) {
+		perror("Could not close output file");
+		goto done;
+	}
 
 	if(fread(&gzip.crc32, 2, 1, in) < 1) {
 		perror("Error reading CRC32");
