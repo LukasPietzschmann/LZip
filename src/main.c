@@ -370,7 +370,8 @@ bool inflate_huffman_codes(bit_stream* stream, huffman_node* literals_root,
 	}
 
 	unsigned bytes_written = 0;
-	while((bytes_written += write(fd, buf, byte_count)) < byte_count)
+	while((bytes_written +=
+			  write(fd, buf + bytes_written, byte_count - bytes_written)) < byte_count)
 		;
 	return true;
 }
