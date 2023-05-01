@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 typedef struct {
@@ -522,7 +524,30 @@ int main(int argc, char* argv[]) {
 	if(!inflate(in, fd))
 		goto done;
 
-	// TODO: set mtime
+	union {
+		unsigned ui;
+		unsigned char little_endian;
+	} u = {1};
+	unsigned mtime = 0;
+	if(u.little_endian) {
+		mtime |= ((unsigned)gzip.header.mtime[0] << 0);
+		mtime |= ((unsigned)gzip.header.mtime[1] << 8);
+		mtime |= ((unsigned)gzip.header.mtime[2] << 16);
+		mtime |= ((unsigned)gzip.header.mtime[3] << 24);
+	} else {
+		mtime |= ((unsigned)gzip.header.mtime[0] << 24);
+		mtime |= ((unsigned)gzip.header.mtime[1] << 16);
+		mtime |= ((unsigned)gzip.header.mtime[2] << 8);
+		mtime |= ((unsigned)gzip.header.mtime[3] << 0);
+	}
+	struct timespec times[2];
+	times[0].tv_sec = mtime;
+	times[0].tv_nsec = 0;
+	times[1] = times[0];
+	if(futimens(fd, times) < 0) {
+		perror("Could not set mtime");
+		goto done;
+	}
 
 	if(close(fd) < 0) {
 		perror("Could not close output file");
